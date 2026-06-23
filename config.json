@@ -1,0 +1,23 @@
+{
+  "api_port": 8787,
+  "admin_chat_ids": [1948669478],
+  "alert_cooldown_sec": 300,
+  "alert_thresholds": {
+    "disk_pct": 85,
+    "load_1m": 4.0,
+    "ram_pct": 90
+  },
+  "projects": [
+    {
+      "id": "polysniper",
+      "name": "PolySniper Backtest",
+      "source": "file",
+      "path": "/opt/polysniper/data/run_status.json"
+    }
+  ],
+  "services": [
+    {"name": "reviewbot", "unit": "reviewbot.service"},
+    {"name": "reviewapi", "unit": "reviewapi.service"},
+    {"name": "telegramvps", "unit": "telegramvps.service"}
+  ]
+}

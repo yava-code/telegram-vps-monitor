@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram VPS Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/telegramvps
+EnvironmentFile=/opt/telegramvps/.env
+ExecStart=/opt/telegramvps/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+User=azureuser
+
+[Install]
+WantedBy=multi-user.target
