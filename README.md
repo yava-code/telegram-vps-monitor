@@ -1,18 +1,18 @@
 # telegram-vps-monitor
 
-pet project — телеграм бот для мониторинга VPS и прогресса своих скриптов/проектов.
+A small Telegram bot + local API for watching a VPS and the progress of your scripts, bots, and batch jobs — from your phone instead of `htop` and `tail -f`.
 
-сделал потому что надоело смотреть `htop` и `tail -f` с телефона.
+Pet / uni side project. MIT licensed.
 
-## что умеет
+## Features
 
-- сервер: cpu, ram, disk, network, top processes
-- systemd сервисы + tail логов + restart (admin)
-- несколько проектов сразу (progress bar, eta)
-- авто-алерты когда диск/ram/load или проект упал/закончился
-- premium emoji если у владельца бота есть TG Premium (рандомные кастомные)
+- **Server**: CPU, RAM, disk, network, top processes
+- **systemd**: service status, log tail, restart (admin only)
+- **Multi-project**: progress bars, ETA, completion alerts
+- **Auto-alerts**: disk/RAM/load thresholds, service down, job failed/finished
+- **Premium emoji**: random custom emoji in messages and inline buttons (requires Telegram Premium on the **bot owner** account)
 
-## быстрый старт
+## Quick start
 
 ```bash
 git clone https://github.com/yava-code/telegram-vps-monitor.git
@@ -21,15 +21,17 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# вписать BOT_TOKEN от @BotFather
+# set BOT_TOKEN from @BotFather
 python bot.py
 ```
 
-## подключить свой проект
+## Connect your project
 
-### вариант 1 — json файл (как polysniper)
+Report **domain data** (pipeline step, counts, errors, business metrics) — not server CPU/RAM; the hub already tracks that.
 
-в `config.json`:
+### Option 1 — JSON file (legacy / simple)
+
+Add to `config.json`:
 
 ```json
 {
@@ -40,7 +42,7 @@ python bot.py
 }
 ```
 
-формат status.json:
+`status.json` format:
 
 ```json
 {
@@ -54,30 +56,48 @@ python bot.py
 }
 ```
 
-### вариант 2 — http api
+Statuses: `idle`, `running`, `completed`, `failed`.
 
-скопируй `client/report.py` и дергай:
+### Option 2 — HTTP API (recommended)
+
+Copy `client/report.py` into your project:
 
 ```python
 from report import push_status
-push_status("myjob", step="train", current=10, total=100)
+
+push_status("myjob", step="train", current=10, total=100, message="epoch 2")
+push_status("myjob", status="completed", verdict="OK", summary="rows=10k\nerrors=0")
 ```
 
-или curl:
+Or curl:
 
 ```bash
 curl -X POST http://127.0.0.1:8787/report \
   -H 'Content-Type: application/json' \
-  -d '{"project_id":"myjob","status":"running","progress":50}'
+  -d '{"project_id":"myjob","status":"running","step":"sync","message":"wallet 0xabc","records":1542}'
 ```
 
-## premium emoji
+Register API-only projects in `config.json`:
 
-бот может слать `<tg-emoji>` только если **у владельца бота** (аккаунт в BotFather) есть Telegram Premium.
+```json
+{"id": "myjob", "name": "My Job", "source": "api"}
+```
 
-1. `ENABLE_CUSTOM_EMOJI=true` в `.env`
-2. добавь id кастомных эмодзи в `PREMIUM_EMOJI_POOL` (через @idstickerbot или форвард в userbot)
-3. бот рандомит их в тексте и на inline-кнопках
+API endpoints (localhost only):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | health check |
+| GET | `/projects` | all project statuses |
+| POST | `/report` | push status update |
+
+## Premium emoji
+
+Custom emoji works only if the **bot owner** (BotFather account) has Telegram Premium.
+
+1. `ENABLE_CUSTOM_EMOJI=true` in `.env`
+2. Add document IDs to `PREMIUM_EMOJI_POOL` (via @idstickerbot or forward to a userbot)
+3. The bot picks random IDs for text (`<tg-emoji>`) and inline button icons
 
 ## systemd
 
@@ -87,10 +107,14 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now telegramvps
 ```
 
-## admin
+## Admin
 
-в `config.json` → `admin_chat_ids`. админ может `/restart`, `/tail`, restart-кнопки.
+Set `admin_chat_ids` in `config.json`. Admins get `/restart`, `/tail`, `/ps`, `/who`, and inline restart buttons.
 
-## license
+## CI
 
-MIT — делай что хочешь, только токен не коммить
+GitHub Actions runs on push/PR: install deps + `py_compile` on all modules. No bot token required.
+
+## License
+
+MIT — do whatever, just don't commit your token.
