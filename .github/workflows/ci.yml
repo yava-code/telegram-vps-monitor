@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check
+        run: |
+          python -m py_compile \
+            bot.py api_server.py store.py sysinfo.py \
+            formatters.py emoji_layer.py keyboards.py watcher.py \
+            client/report.py
+
+      - name: Import smoke test
+        run: |
+          python -c "import api_server, store, sysinfo, formatters, emoji_layer, keyboards, watcher"
