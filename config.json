@@ -2,6 +2,8 @@
   "api_port": 8787,
   "admin_chat_ids": [1948669478],
   "alert_cooldown_sec": 300,
+  "feed_digest_hours": 6,
+  "watch_interval_sec": 300,
   "alert_thresholds": {
     "disk_pct": 85,
     "load_1m": 4.0,
@@ -13,7 +15,54 @@
       "name": "PolySniper Backtest",
       "source": "file",
       "path": "/opt/polysniper/data/run_status.json"
+    },
+    {
+      "id": "review-roadmap",
+      "name": "Review Roadmap",
+      "source": "api"
+    },
+    {
+      "id": "reddit-scraper",
+      "name": "Reddit Scraper",
+      "source": "api"
     }
+  ],
+  "probes": [
+    {
+      "id": "review-roadmap",
+      "url": "http://127.0.0.1:8000/health/ready",
+      "interval_sec": 60
+    }
+  ],
+  "feeds": [
+    {
+      "name": "Free Games",
+      "url": "https://www.reddit.com/r/FreeGameFindings/.rss",
+      "limit": 5
+    },
+    {
+      "name": "Hacker News",
+      "url": "https://hnrss.org/frontpage",
+      "limit": 5
+    }
+  ],
+  "watch_urls": [
+    {
+      "name": "Epic Free",
+      "url": "https://store.epicgames.com/en-US/free-games"
+    },
+    {
+      "name": "Steam Free",
+      "url": "https://store.steampowered.com/search/?specials=1&maxprice=free"
+    }
+  ],
+  "ssl_domains": [
+    "github.com"
+  ],
+  "git_dirs": [
+    "/opt/telegramvps",
+    "/opt/review-roadmap",
+    "/opt/polysniper"
   ],
   "services": [
     {"name": "reviewbot", "unit": "reviewbot.service"},
