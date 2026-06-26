@@ -23,8 +23,9 @@
       "switch",
       "drm-free"
     ],
-    "types": ["game", "loot", "beta", "early-access", "dlc"],
-    "max_items": 50,
+    "types": ["game", "beta", "early-access"],
+    "games_only": true,
+    "digest_max_items": 10,
     "include_steam_search": true
   },
   "watch_interval_sec": 300,
@@ -59,11 +60,6 @@
     }
   ],
   "feeds": [
-    {
-      "name": "GamerPower",
-      "url": "https://www.gamerpower.com/rss/giveaways",
-      "limit": 5
-    },
     {
       "name": "Hacker News",
       "url": "https://hnrss.org/frontpage",

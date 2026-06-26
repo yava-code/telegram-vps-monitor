@@ -90,8 +90,66 @@ def _primary_platform(platforms):
     return platforms[0] if platforms else "other"
 
 
-def _item_key(item):
-    return item.get("id") or f"{item.get('source')}:{item.get('title', '').lower()}"
+_SPAM_TITLE = re.compile(
+    r"\b(dlc|key giveaway|gift pack|bundle|emblem|decal|skin|starter kit|"
+    r"points key|code|items pack|content pack|weapon|helmet|in-game items|"
+    r"welcome bundle|free points|carols|volume \d|pack key)\b",
+    re.I,
+)
+
+_PLATFORM_SCORE = {p: i for i, p in enumerate(_PLATFORM_ORDER)}
+
+
+def _norm_game_title(title):
+    t = (title or "").lower()
+    t = re.sub(r"\s*\([^)]*(?:steam|giveaway|mobile|pc|indiegala)[^)]*\)", " ", t, flags=re.I)
+    t = re.sub(r"\bgiveaway\b", " ", t)
+    t = re.sub(r":?\s*chapter\s*\d+\b", " ", t, flags=re.I)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _worth_value(worth):
+    if not worth or worth.lower() in ("n/a", "free"):
+        return 0.0
+    m = re.search(r"[\d]+(?:\.\d+)?", worth.replace(",", ""))
+    if not m:
+        return 0.0
+    try:
+        return float(m.group())
+    except ValueError:
+        return 0.0
+
+
+def _is_real_game(item, fb_cfg):
+    if item.get("source") == "steam":
+        return True
+    gtype = (item.get("type") or "").lower()
+    if fb_cfg.get("games_only", True) and gtype not in ("game", "beta", "early-access"):
+        return False
+    if _SPAM_TITLE.search(item.get("title", "")):
+        return False
+    return True
+
+
+def filter_digest_items(items, cfg):
+    fb = _cfg(cfg)
+    picked = []
+    seen = set()
+    for it in items:
+        if not _is_real_game(it, fb):
+            continue
+        key = _norm_game_title(it.get("title", ""))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        picked.append(it)
+
+    def sort_key(it):
+        plat = _PLATFORM_SCORE.get(it.get("platform", "other"), 99)
+        return (plat, -_worth_value(it.get("worth", "")))
+
+    picked.sort(key=sort_key)
+    return picked[: int(fb.get("digest_max_items", 10))]
 
 
 def fetch_gamerpower(fb_cfg):
@@ -173,7 +231,7 @@ def fetch_steam_free_specials():
     return items, None
 
 
-def collect_all(cfg):
+def collect_raw(cfg):
     fb = _cfg(cfg)
     if not fb.get("enabled", True):
         return [], None
@@ -190,17 +248,21 @@ def collect_all(cfg):
         st_items, st_err = fetch_steam_free_specials()
         if st_err:
             errors.append(f"steam: {st_err}")
-        seen_titles = {it["title"].lower() for it in merged if it.get("title")}
+        seen_titles = {_norm_game_title(it.get("title", "")) for it in merged}
         for it in st_items:
-            if it["title"].lower() not in seen_titles:
+            key = _norm_game_title(it.get("title", ""))
+            if key and key not in seen_titles:
                 merged.append(it)
-
-    max_items = fb.get("max_items", 50)
-    if len(merged) > max_items:
-        merged = merged[:max_items]
 
     err = "; ".join(errors) if errors else None
     return merged, err
+
+
+def collect_all(cfg, digest=False):
+    raw, err = collect_raw(cfg)
+    if digest:
+        return filter_digest_items(raw, cfg), err
+    return raw, err
 
 
 def _group_items(items):
@@ -217,7 +279,7 @@ def _group_items(items):
     return ordered
 
 
-def format_digest(items, cfg, err=None):
+def format_digest(items, cfg, err=None, compact=True):
     fb = _cfg(cfg)
     tz_name = fb.get("timezone", "Europe/Kyiv")
     try:
@@ -226,16 +288,31 @@ def format_digest(items, cfg, err=None):
     except Exception:
         stamp = datetime.utcnow().strftime("%d %b %Y")
 
-    lines = [f"{em.html('🎁')} <b>Freebies</b> — {stamp}\n"]
+    lines = [f"{em.html('🎁')} <b>Халява</b> — {stamp}"]
     if err:
-        lines.append(f"<i>partial: {_esc(err)}</i>\n")
+        lines.append(f"<i>partial: {_esc(err)}</i>")
 
     if not items:
-        lines.append("<i>nothing active right now</i>")
+        lines.append("<i>сейчас пусто</i>")
         return "\n".join(lines)
 
-    total = len(items)
-    lines.append(f"<i>{total} active</i>\n")
+    lines.append(f"<i>{len(items)} игр</i>\n")
+
+    if compact:
+        for it in items:
+            title = _esc((it.get("title") or "?")[:80])
+            plat = _PLATFORM_LABELS.get(it.get("platform", "other"), it.get("platform", ""))
+            worth = it.get("worth", "")
+            url = it.get("url", "")
+            meta = _esc(plat)
+            if worth and worth.lower() not in ("n/a", "free"):
+                meta = f"{meta}, {_esc(worth)}"
+            if url:
+                safe_url = url.replace("&", "&amp;").replace('"', "%22")
+                lines.append(f"• <a href=\"{safe_url}\">{title}</a> — {meta}")
+            else:
+                lines.append(f"• {title} — {meta}")
+        return "\n".join(lines).strip()
 
     for plat, bucket in _group_items(items):
         label = _PLATFORM_LABELS.get(plat, plat)
@@ -244,13 +321,7 @@ def format_digest(items, cfg, err=None):
             title = _esc((it.get("title") or "?")[:100])
             url = it.get("url", "")
             worth = it.get("worth", "")
-            kind = it.get("type", "")
-            extra = []
-            if worth and worth.lower() != "n/a":
-                extra.append(_esc(worth))
-            if kind and kind.lower() != "game":
-                extra.append(_esc(kind))
-            suffix = f" — {', '.join(extra)}" if extra else ""
+            suffix = f" — {_esc(worth)}" if worth and worth.lower() != "n/a" else ""
             if url:
                 safe_url = url.replace("&", "&amp;").replace('"', "%22")
                 lines.append(f"• <a href=\"{safe_url}\">{title}</a>{suffix}")
@@ -259,23 +330,6 @@ def format_digest(items, cfg, err=None):
         lines.append("")
 
     return "\n".join(lines).strip()
-
-
-def split_messages(text, limit=3800):
-    if len(text) <= limit:
-        return [text]
-    chunks = []
-    block = ""
-    for line in text.split("\n"):
-        candidate = f"{block}\n{line}".strip() if block else line
-        if len(candidate) > limit and block:
-            chunks.append(block.strip())
-            block = line
-        else:
-            block = candidate
-    if block:
-        chunks.append(block.strip())
-    return chunks or [text[:limit]]
 
 
 def digest_due(cfg, st):
@@ -291,7 +345,7 @@ def digest_due(cfg, st):
         now = datetime.utcnow()
 
     today = now.strftime("%Y-%m-%d")
-    if now.hour != hour:
+    if now.hour != hour or now.minute != 0:
         return False
     if st.get("freebies_last_date") == today:
         return False

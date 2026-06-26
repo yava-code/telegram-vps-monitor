@@ -177,12 +177,11 @@ async def freebies_digest_loop(bot):
             if fb_cfg.get("enabled", True):
                 st = store.load_state()
                 if freebies.digest_due(cfg, st):
-                    items, err = freebies.collect_all(cfg)
-                    text = freebies.format_digest(items, cfg, err=err)
-                    for chunk in freebies.split_messages(text):
-                        await notify_all(bot, chunk)
                     st["freebies_last_date"] = freebies.today_key(cfg)
                     store.save_state(st)
+                    items, err = freebies.collect_all(cfg, digest=True)
+                    text = freebies.format_digest(items, cfg, err=err, compact=True)
+                    await notify_all(bot, text)
         except Exception as e:
             print(f"freebies digest error: {e}")
         await asyncio.sleep(60)
@@ -264,10 +263,9 @@ async def cmd_feeds(msg: Message):
 
 
 async def cmd_freebies(msg: Message):
-    items, err = freebies.collect_all(cfg)
-    text = freebies.format_digest(items, cfg, err=err)
-    for chunk in freebies.split_messages(text):
-        await safe_answer(msg, chunk)
+    items, err = freebies.collect_all(cfg, digest=True)
+    text = freebies.format_digest(items, cfg, err=err, compact=True)
+    await safe_answer(msg, text)
 
 
 async def cmd_projects(msg: Message):
