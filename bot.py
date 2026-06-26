@@ -74,9 +74,11 @@ async def safe_send(bot, chat_id, text):
     try:
         await bot.send_message(chat_id, text, parse_mode="HTML")
     except TelegramBadRequest as e:
-        if "DOCUMENT_INVALID" not in str(e):
-            raise
-        await bot.send_message(chat_id, em.strip_premium(text), parse_mode="HTML")
+        err = str(e)
+        if "DOCUMENT_INVALID" in err or "can't parse entities" in err:
+            await bot.send_message(chat_id, em.strip_premium(text), parse_mode="HTML")
+            return
+        raise
     except Exception:
         pass
 
@@ -170,16 +172,19 @@ async def watch_loop(bot):
 
 async def freebies_digest_loop(bot):
     while True:
-        fb_cfg = cfg.get("freebies", {})
-        if fb_cfg.get("enabled", True):
-            st = store.load_state()
-            if freebies.digest_due(cfg, st):
-                items, err = freebies.collect_all(cfg)
-                text = freebies.format_digest(items, cfg, err=err)
-                for chunk in freebies.split_messages(text):
-                    await notify_all(bot, chunk)
-                st["freebies_last_date"] = freebies.today_key(cfg)
-                store.save_state(st)
+        try:
+            fb_cfg = cfg.get("freebies", {})
+            if fb_cfg.get("enabled", True):
+                st = store.load_state()
+                if freebies.digest_due(cfg, st):
+                    items, err = freebies.collect_all(cfg)
+                    text = freebies.format_digest(items, cfg, err=err)
+                    for chunk in freebies.split_messages(text):
+                        await notify_all(bot, chunk)
+                    st["freebies_last_date"] = freebies.today_key(cfg)
+                    store.save_state(st)
+        except Exception as e:
+            print(f"freebies digest error: {e}")
         await asyncio.sleep(60)
 
 

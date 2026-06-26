@@ -1,4 +1,3 @@
-import html
 import os
 import re
 from datetime import datetime
@@ -26,6 +25,17 @@ _PLATFORM_ORDER = [
     "drm-free",
     "other",
 ]
+
+def _esc(text):
+    if not text:
+        return ""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
 
 _PLATFORM_LABELS = {
     "steam": "Steam",
@@ -147,7 +157,7 @@ def fetch_steam_free_specials():
         if appid in seen:
             continue
         seen.add(appid)
-        title = html.unescape(name.strip())
+        title = name.strip().replace("&amp;", "&")
         items.append(
             {
                 "id": f"steam:{appid}",
@@ -218,7 +228,7 @@ def format_digest(items, cfg, err=None):
 
     lines = [f"{em.html('🎁')} <b>Freebies</b> — {stamp}\n"]
     if err:
-        lines.append(f"<i>partial: {html.escape(err)}</i>\n")
+        lines.append(f"<i>partial: {_esc(err)}</i>\n")
 
     if not items:
         lines.append("<i>nothing active right now</i>")
@@ -229,20 +239,21 @@ def format_digest(items, cfg, err=None):
 
     for plat, bucket in _group_items(items):
         label = _PLATFORM_LABELS.get(plat, plat)
-        lines.append(f"<b>{html.escape(label)}</b> ({len(bucket)})")
+        lines.append(f"<b>{_esc(label)}</b> ({len(bucket)})")
         for it in bucket:
-            title = html.escape((it.get("title") or "?")[:100])
+            title = _esc((it.get("title") or "?")[:100])
             url = it.get("url", "")
             worth = it.get("worth", "")
             kind = it.get("type", "")
             extra = []
             if worth and worth.lower() != "n/a":
-                extra.append(html.escape(worth))
+                extra.append(_esc(worth))
             if kind and kind.lower() != "game":
-                extra.append(html.escape(kind))
+                extra.append(_esc(kind))
             suffix = f" — {', '.join(extra)}" if extra else ""
             if url:
-                lines.append(f"• <a href=\"{html.escape(url, quote=True)}\">{title}</a>{suffix}")
+                safe_url = url.replace("&", "&amp;").replace('"', "%22")
+                lines.append(f"• <a href=\"{safe_url}\">{title}</a>{suffix}")
             else:
                 lines.append(f"• {title}{suffix}")
         lines.append("")
