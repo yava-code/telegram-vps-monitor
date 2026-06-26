@@ -19,6 +19,7 @@ def _ib(text, data):
 def main_menu():
     rows = [
         [KeyboardButton(text="📦 Projects"), KeyboardButton(text="🖥 Server")],
+        [KeyboardButton(text="🤖 AI Chat")],
         [KeyboardButton(text="📰 Feeds"), KeyboardButton(text="🎁 Freebies")],
         [KeyboardButton(text="👁 Watch"), KeyboardButton(text="🔒 SSL")],
         [KeyboardButton(text="📂 Git"), KeyboardButton(text="⚙️ Services")],

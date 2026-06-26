@@ -4,11 +4,18 @@ import json
 import os
 import time
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import CallbackQuery, Message
 
+import ai_assistant
 import api_server
 import emoji_layer as em
 import feeds
@@ -30,6 +37,10 @@ CONFIG_PATH = os.path.join(BASE, "config.json")
 
 cfg = {}
 alert_last = {}
+
+
+class AiChat(StatesGroup):
+    active = State()
 
 
 def load_cfg():
@@ -187,6 +198,32 @@ async def freebies_digest_loop(bot):
         await asyncio.sleep(60)
 
 
+async def ai_report_loop(bot):
+    while True:
+        try:
+            ai_cfg = cfg.get("ai", {})
+            rep = ai_cfg.get("daily_report", {})
+            if ai_cfg.get("enabled", True) and rep.get("enabled", True):
+                tz_name = rep.get("timezone", "Europe/Kyiv")
+                hour = int(rep.get("hour", 9))
+                try:
+                    now = datetime.now(ZoneInfo(tz_name))
+                except Exception:
+                    now = datetime.utcnow()
+                if now.hour == hour and now.minute == 0:
+                    st = store.load_state()
+                    today = now.strftime("%Y-%m-%d")
+                    if st.get("ai_report_date") != today:
+                        st["ai_report_date"] = today
+                        store.save_state(st)
+                        text = ai_assistant.build_daily_report(cfg)
+                        for cid in cfg.get("admin_chat_ids", []):
+                            await safe_send(bot, cid, text)
+        except Exception as e:
+            print(f"ai report error: {e}")
+        await asyncio.sleep(60)
+
+
 async def feed_digest_loop(bot):
     hours = cfg.get("feed_digest_hours", 6)
     while True:
@@ -243,6 +280,10 @@ async def cmd_help(msg: Message):
     ]
     if is_admin(msg.chat.id):
         lines += [
+            "/ai — ИИ-помощник (server + код)",
+            "/ai_exit — выход из чата",
+            "/ai_clear — сброс истории",
+            "/ai_reindex — пересборка RAG",
             "",
             "<b>admin:</b>",
             "/restart &lt;unit&gt;",
@@ -266,6 +307,77 @@ async def cmd_freebies(msg: Message):
     items, err = freebies.collect_all(cfg, digest=True)
     text = freebies.format_digest(items, cfg, err=err, compact=True)
     await safe_answer(msg, text)
+
+
+async def _ai_guard(msg: Message):
+    if not is_admin(msg.chat.id):
+        await msg.answer("AI chat — admin only")
+        return False
+    if not cfg.get("ai", {}).get("enabled", True):
+        await msg.answer("AI disabled in config")
+        return False
+    return True
+
+
+async def cmd_ai(msg: Message, state: FSMContext):
+    if not await _ai_guard(msg):
+        return
+    await state.set_state(AiChat.active)
+    text = (
+        f"{em.ai_icon()} <b>AI Chat</b>\n\n"
+        "спрашивай про сервер, проекты, код, оптимизацию\n"
+        "/ai_exit — выход · /ai_clear — сброс истории"
+    )
+    await safe_answer(msg, text)
+
+
+async def cmd_ai_exit(msg: Message, state: FSMContext):
+    await state.clear()
+    await safe_answer(msg, f"{em.html('👋')} вышел из AI chat", reply_markup=kb.main_menu())
+
+
+async def cmd_ai_clear(msg: Message):
+    if not await _ai_guard(msg):
+        return
+    ai_assistant.clear_history(msg.chat.id)
+    await safe_answer(msg, "история AI очищена")
+
+
+async def cmd_ai_reindex(msg: Message):
+    if not await _ai_guard(msg):
+        return
+    await msg.answer("пересборка RAG индекса…")
+    n = await asyncio.to_thread(ai_assistant.ensure_index, cfg, True)
+    await safe_answer(msg, f"RAG готов: {n} chunks")
+
+
+_MENU_BTNS = {
+    "📦 Projects", "🖥 Server", "📰 Feeds", "🎁 Freebies", "👁 Watch",
+    "🔒 SSL", "📂 Git", "⚙️ Services", "📜 Logs", "💾 Disk", "🔔 Alerts",
+}
+
+
+async def on_ai_message(msg: Message, state: FSMContext):
+    if not await _ai_guard(msg):
+        await state.clear()
+        return
+    t = (msg.text or "").strip()
+    if t in _MENU_BTNS:
+        await state.clear()
+        await on_text(msg, state)
+        return
+    if not t or t.startswith("/"):
+        return
+    wait = await msg.answer(f"{em.ai_icon()} думаю…")
+    try:
+        reply = await asyncio.to_thread(ai_assistant.ask, t, msg.chat.id, cfg)
+        for chunk in ai_assistant.format_reply(reply):
+            await safe_answer(msg, chunk)
+    finally:
+        try:
+            await wait.delete()
+        except Exception:
+            pass
 
 
 async def cmd_projects(msg: Message):
@@ -356,8 +468,11 @@ async def cmd_run(msg: Message):
     await safe_answer(msg, text[:4000])
 
 
-async def on_text(msg: Message):
+async def on_text(msg: Message, state: FSMContext):
     t = (msg.text or "").strip()
+    if t == "🤖 AI Chat":
+        await cmd_ai(msg, state)
+        return
     if t == "📦 Projects":
         await cmd_projects(msg)
     elif t == "🖥 Server":
@@ -465,14 +580,26 @@ async def main():
     api_server.start_api(cfg.get("api_port", 8787))
     watcher.start_file_watcher(cfg.get("projects", []))
 
+    if cfg.get("ai", {}).get("enabled", True):
+        try:
+            n = ai_assistant.ensure_index(cfg)
+            print(f"rag index: {n} chunks")
+        except Exception as e:
+            print(f"rag index error: {e}")
+
     bot = Bot(token)
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
 
     dp.message.register(cmd_start, Command("start"))
     dp.message.register(cmd_help, Command("help"))
     dp.message.register(cmd_ping, Command("ping"))
     dp.message.register(cmd_feeds, Command("feeds"))
     dp.message.register(cmd_freebies, Command("freebies"))
+    dp.message.register(cmd_ai, Command("ai"))
+    dp.message.register(cmd_ai_exit, Command("ai_exit"))
+    dp.message.register(cmd_ai_clear, Command("ai_clear"))
+    dp.message.register(cmd_ai_reindex, Command("ai_reindex"))
+    dp.message.register(on_ai_message, StateFilter(AiChat.active), F.text)
     dp.message.register(cmd_projects, Command("projects"))
     dp.message.register(cmd_status, Command("status"))
     dp.message.register(cmd_restart, Command("restart"))
@@ -488,6 +615,7 @@ async def main():
     asyncio.create_task(watch_loop(bot))
     asyncio.create_task(feed_digest_loop(bot))
     asyncio.create_task(freebies_digest_loop(bot))
+    asyncio.create_task(ai_report_loop(bot))
     probes.run_probes(cfg.get("probes", []))
     print("telegramvps bot polling...")
     await dp.start_polling(bot)

@@ -3,6 +3,29 @@
   "admin_chat_ids": [1948669478],
   "alert_cooldown_sec": 300,
   "feed_digest_hours": 6,
+  "ai": {
+    "enabled": true,
+    "admin_only": true,
+    "primary_model": "minimaxai/minimax-m3",
+    "fallback_model": "meta-llama/llama-3.3-70b-instruct:free",
+    "embedding_model": "nvidia/nv-embedqa-e5-v5",
+    "temperature": 0.4,
+    "max_tokens": 4096,
+    "rag_paths": [
+      "/opt/telegramvps",
+      "/opt/review-roadmap",
+      "/opt/polysniper"
+    ],
+    "rag_rebuild_hours": 24,
+    "history_limit": 20,
+    "min_gap_sec": 3,
+    "max_per_hour": 30,
+    "daily_report": {
+      "enabled": true,
+      "hour": 9,
+      "timezone": "Europe/Kyiv"
+    }
+  },
   "freebies": {
     "enabled": true,
     "digest_hour": 13,
