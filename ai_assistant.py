@@ -13,11 +13,16 @@ import sysinfo as si
 BASE = os.path.dirname(os.path.abspath(__file__))
 HISTORY_FILE = os.path.join(BASE, "data", "ai_chats.json")
 
-SYSTEM_PROMPT = """Ты ИИ-помощник по обслуживанию VPS и проектов в /opt.
+SYSTEM_PROMPT = """Ты ИИ-помощник по обслуживанию VPS и проектам:
+- /opt/telegramvps — этот monitor-бот (bot.py, ai_assistant.py)
+- /opt/review-roadmap — steam reviews API/bot
+- /opt/polysniper — backtest
+
 Отвечай по-русски, кратко и по делу.
-Не выдумывай метрики — используй tools для live-данных и search_docs/read_file для кода.
-Shell только для диагностики. Не предлагай rm -rf, reboot, mkfs и разрушительные команды.
-Если данных нет — скажи честно."""
+Не выдумывай метрики — вызывай tools через ОТДЕЛЬНОЕ сообщение (только тег tool, без текста):
+<tool>name</tool> <args>{"key":"value"}</args>
+После получения результата tool — отвечай обычным текстом БЕЗ tool-тегов.
+Shell только для диагностики. Не предлагай rm -rf, reboot, mkfs."""
 
 _rate_last = {}
 _rate_hour = {}
@@ -78,6 +83,7 @@ def _llm_primary(ai_cfg):
         temperature=float(ai_cfg.get("temperature", 0.4)),
         top_p=0.95,
         max_completion_tokens=int(ai_cfg.get("max_tokens", 4096)),
+        timeout=float(ai_cfg.get("timeout_sec", 180)),
     )
 
 
@@ -85,27 +91,49 @@ def _llm_fallback(ai_cfg):
     from langchain_openai import ChatOpenAI
 
     return ChatOpenAI(
-        model=ai_cfg.get("fallback_model", "meta-llama/llama-3.3-70b-instruct:free"),
+        model=ai_cfg.get("fallback_model", "google/gemma-3-27b-it:free"),
         api_key=os.getenv("OPENROUTER_API_KEY", ""),
         base_url="https://openrouter.ai/api/v1",
         temperature=float(ai_cfg.get("temperature", 0.4)),
         max_tokens=int(ai_cfg.get("max_tokens", 4096)),
+        timeout=float(ai_cfg.get("timeout_sec", 180)),
     )
 
 
 def _invoke_llm(ai_cfg, messages):
     errs = []
     if os.getenv("NVIDIA_API_KEY"):
-        try:
-            return _llm_primary(ai_cfg).invoke(messages), "nvidia"
-        except Exception as e:
-            errs.append(f"nvidia: {e}")
+        for attempt in range(2):
+            try:
+                return _llm_primary(ai_cfg).invoke(messages), "nvidia"
+            except Exception as e:
+                if attempt == 0 and "timed out" in str(e).lower():
+                    time.sleep(2)
+                    continue
+                errs.append(f"nvidia: {e}")
+                break
     if os.getenv("OPENROUTER_API_KEY"):
-        try:
-            return _llm_fallback(ai_cfg).invoke(messages), "openrouter"
-        except Exception as e:
-            errs.append(f"openrouter: {e}")
+        for attempt in range(2):
+            try:
+                return _llm_fallback(ai_cfg).invoke(messages), "openrouter"
+            except Exception as e:
+                if attempt == 0 and "429" in str(e):
+                    time.sleep(30)
+                    continue
+                errs.append(f"openrouter: {e}")
+                break
     raise RuntimeError("; ".join(errs) or "no API keys")
+
+
+def _rag_prefetch(question, ai_cfg):
+    keys = (".py", "/opt", "bot", "модул", "файл", "код", "проект", "review", "polysniper", "telegram")
+    if not any(k in question.lower() for k in keys):
+        return ""
+    hits = ai_rag.search(question, ai_cfg, k=4)
+    if not hits:
+        return ""
+    parts = [f"[{h.get('source', '?')}]\n{h.get('text', '')[:500]}" for h in hits]
+    return "\n\n[RAG context]\n" + "\n\n".join(parts)
 
 
 def _tool_search_docs(query, ai_cfg):
@@ -175,9 +203,21 @@ def _tool_run_command(cmd, chat_id, cfg):
     return f"exit={code}\n{out}"
 
 
+def _strip_tool_markup(text):
+    return re.sub(
+        r"<tool>.*?</tool>\s*<args>.*?</args>",
+        "",
+        text or "",
+        flags=re.S | re.I,
+    ).strip()
+
+
 def _extract_tool_call(text):
     m = re.search(r"<tool>([a-z_]+)</tool>\s*<args>(.*?)</args>", text, re.S | re.I)
     if not m:
+        return None, None
+    pre = text[: m.start()].strip()
+    if len(pre) > 40:
         return None, None
     name = m.group(1).strip().lower()
     raw = m.group(2).strip()
@@ -251,23 +291,24 @@ def ask(question, chat_id, cfg):
     try:
         from langchain_core.messages import AIMessage, HumanMessage
 
-        msgs = _build_messages(history, question, cfg, ai_cfg)
+        enriched = question + _rag_prefetch(question, ai_cfg)
+        msgs = _build_messages(history, enriched, cfg, ai_cfg)
         answer = ""
         provider = "?"
 
-        for _ in range(3):
+        for _ in range(4):
             resp, provider = _invoke_llm(ai_cfg, msgs)
             text = (resp.content or "").strip()
             tool_name, tool_args = _extract_tool_call(text)
             if not tool_name:
-                answer = text
+                answer = _strip_tool_markup(text)
                 break
             tool_out = _run_tool(tool_name, tool_args or {}, chat_id, cfg, ai_cfg)
             msgs.append(AIMessage(content=text))
             msgs.append(HumanMessage(content=f"[tool {tool_name} result]\n{tool_out[:6000]}"))
         else:
             resp, provider = _invoke_llm(ai_cfg, msgs)
-            answer = (resp.content or "").strip()
+            answer = _strip_tool_markup((resp.content or "").strip())
 
         if not answer:
             answer = "пустой ответ от модели"
@@ -275,9 +316,10 @@ def ask(question, chat_id, cfg):
         history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": answer})
         save_history(chat_id, history, limit)
-        return f"{answer}\n\n<i>via {provider}</i>"
-    except Exception:
-        return _offline_snapshot()
+        return f"{answer}\n\n(via {provider})"
+    except Exception as e:
+        print(f"ai ask error: {e}")
+        return f"AI error: {e}\n\n{_offline_snapshot()}"
 
 
 def build_daily_report(cfg):

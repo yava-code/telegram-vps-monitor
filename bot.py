@@ -73,12 +73,20 @@ def allowed_unit(unit):
 
 
 async def safe_answer(msg, text, **kwargs):
+    if "parse_mode" not in kwargs:
+        kwargs["parse_mode"] = "HTML"
+    parse_mode = kwargs["parse_mode"]
     try:
-        await msg.answer(text, parse_mode="HTML", **kwargs)
+        return await msg.answer(text, **kwargs)
     except TelegramBadRequest as e:
-        if "DOCUMENT_INVALID" not in str(e):
-            raise
-        await msg.answer(em.strip_premium(text), parse_mode="HTML", **kwargs)
+        err = str(e)
+        if parse_mode == "HTML" and (
+            "DOCUMENT_INVALID" in err or "can't parse entities" in err
+        ):
+            plain = em.strip_premium(text)
+            plain_kwargs = {k: v for k, v in kwargs.items() if k != "parse_mode"}
+            return await msg.answer(plain, **plain_kwargs)
+        raise
 
 
 async def safe_send(bot, chat_id, text):
@@ -368,11 +376,22 @@ async def on_ai_message(msg: Message, state: FSMContext):
         return
     if not t or t.startswith("/"):
         return
-    wait = await msg.answer(f"{em.ai_icon()} думаю…")
     try:
-        reply = await asyncio.to_thread(ai_assistant.ask, t, msg.chat.id, cfg)
+        wait = await msg.answer(f"{em.ai_icon()} думаю…", parse_mode="HTML")
+    except TelegramBadRequest:
+        wait = await msg.answer("🤖 думаю…")
+    try:
+        reply = await asyncio.wait_for(
+            asyncio.to_thread(ai_assistant.ask, t, msg.chat.id, cfg),
+            timeout=180,
+        )
         for chunk in ai_assistant.format_reply(reply):
-            await safe_answer(msg, chunk)
+            await msg.answer(chunk)
+    except asyncio.TimeoutError:
+        await msg.answer("AI timeout (>3 min). Попробуй короче или /ai_clear.")
+    except Exception as e:
+        print(f"on_ai_message error: {e}")
+        await msg.answer(f"AI error: {html.escape(str(e)[:500])}")
     finally:
         try:
             await wait.delete()
