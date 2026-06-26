@@ -8,7 +8,7 @@ from aiogram.types import (
 import emoji_layer as em
 
 
-def _ib(text, data, emoji_fallback=None):
+def _ib(text, data):
     kwargs = {"text": text, "callback_data": data}
     eid = em.btn_id()
     if eid:
@@ -19,9 +19,11 @@ def _ib(text, data, emoji_fallback=None):
 def main_menu():
     rows = [
         [KeyboardButton(text="📦 Projects"), KeyboardButton(text="🖥 Server")],
-        [KeyboardButton(text="💾 Disk"), KeyboardButton(text="🌐 Network")],
-        [KeyboardButton(text="📈 Top"), KeyboardButton(text="⚙️ Services")],
-        [KeyboardButton(text="📜 Logs"), KeyboardButton(text="🔔 Alerts")],
+        [KeyboardButton(text="📰 Feeds"), KeyboardButton(text="🎁 Freebies")],
+        [KeyboardButton(text="👁 Watch"), KeyboardButton(text="🔒 SSL")],
+        [KeyboardButton(text="📂 Git"), KeyboardButton(text="⚙️ Services")],
+        [KeyboardButton(text="📜 Logs"), KeyboardButton(text="💾 Disk")],
+        [KeyboardButton(text="🔔 Alerts")],
     ]
     return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True)
 
@@ -34,7 +36,7 @@ def projects_inline(projects_cfg):
         buttons.append([_ib(name, f"proj:{pid}")])
     if not buttons:
         buttons = [[_ib("empty", "noop")]]
-    buttons.append([_ib("↩️ refresh", "refresh:projects")])
+    buttons.append([_ib("refresh", "refresh:projects")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -42,10 +44,10 @@ def services_inline(services, admin=False):
     rows = []
     for s in services:
         name = s.get("name", s["unit"])
-        rows.append([_ib(f"📋 {name}", f"log:{s['unit']}")])
+        rows.append([_ib(f"log {name}", f"log:{s['unit']}")])
         if admin:
-            rows.append([_ib(f"🔄 restart {name}", f"restart:{s['unit']}")])
-    rows.append([_ib("↩️ refresh", "refresh:services")])
+            rows.append([_ib(f"restart {name}", f"restart:{s['unit']}")])
+    rows.append([_ib("refresh", "refresh:services")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
